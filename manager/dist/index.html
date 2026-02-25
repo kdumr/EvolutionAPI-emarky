@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <link rel="icon" type="image/png" href="https://evolution-api.com/files/evo/favicon.svg" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Evolution Manager</title>
+  <script type="module" crossorigin src="/assets/index-CO3NSIFj.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-DsIrum0U.css">
+  <style>
+    :root,
+    .dark {
+      --primary: 263.4 70% 50.4% !important;
+      --primary-foreground: 210 40% 98% !important;
+      --ring: 263.4 70% 50.4% !important;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="root"></div>
+  <script>
+    new MutationObserver(function () {
+      var img = document.querySelector('header img, nav img, a[href="/manager"] img');
+      if (img && !img.dataset.emarky) {
+        img.dataset.emarky = '1';
+        var span = document.createElement('span');
+        span.textContent = ' - Vers\u00e3o emarky';
+        span.style.cssText = 'font-weight:600;font-size:14px;opacity:0.85;margin-left:4px;';
+        img.parentElement.appendChild(span);
+      }
+    }).observe(document.body, { childList: true, subtree: true });
+  </script>
+</body>
+
+</html>
