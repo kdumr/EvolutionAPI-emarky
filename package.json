@@ -70,6 +70,7 @@
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "@figuro/chatwoot-sdk": "^1.1.16",
     "@hapi/boom": "^10.0.1",
+    "@itsliaaa/baileys": "github:itsliaaa/baileys",
     "@paralleldrive/cuid2": "^2.2.2",
     "@prisma/client": "^6.16.2",
     "@ryuu-reinzz/button-helper": "^2.2.5",

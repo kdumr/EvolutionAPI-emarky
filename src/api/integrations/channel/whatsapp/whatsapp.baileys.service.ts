@@ -152,7 +152,64 @@ import sharp from 'sharp';
 import { PassThrough, Readable } from 'stream';
 import { v4 } from 'uuid';
 
-import { getButtonArgs } from '@ryuu-reinzz/button-helper';
+/**
+ * getBizBinaryNode - Derived from @itsliaaa/baileys (WABinary/generic-utils)
+ * Generates the 'biz' binary node required for interactive messages.
+ * Unlike @ryuu-reinzz/button-helper's getButtonArgs, this includes a
+ * 'quality_control' node which allows buttons to render on WhatsApp Web
+ * WITHOUT requiring the 'bot' node (which causes the IA✦ tag).
+ */
+const bizBinaryQualityAttribute = {
+  tag: 'quality_control',
+  attrs: { source_type: 'third_party' },
+  content: undefined,
+};
+const baseBizAttrs = {};
+const defaultBizContent = [bizBinaryQualityAttribute];
+const listBizContent = [
+  { tag: 'list', attrs: { v: '2', type: 'product_list' }, content: undefined },
+  bizBinaryQualityAttribute,
+];
+const makeInteractiveBizContent = (v: string, name: string) => [
+  {
+    tag: 'interactive',
+    attrs: { type: 'native_flow', v: '1' },
+    content: [{ tag: 'native_flow', attrs: { v, name }, content: undefined }],
+  },
+  bizBinaryQualityAttribute,
+];
+
+const bizFlowMap: Record<string, number> = {
+  mpm: 1,
+  cta_catalog: 1,
+  send_location: 1,
+  call_permission_request: 1,
+  wa_payment_transaction_details: 1,
+  automated_greeting_message_view_catalog: 1,
+};
+
+function getBizBinaryNode(message: any): { tag: string; attrs: Record<string, any>; content?: any[] } {
+  const nativeFlowMessage = message.interactiveMessage?.nativeFlowMessage;
+  const buttonName = nativeFlowMessage?.buttons?.[0]?.name;
+
+  if (buttonName === 'review_and_pay' || buttonName === 'payment_info') {
+    return {
+      tag: 'biz',
+      attrs: { native_flow_name: buttonName === 'review_and_pay' ? 'order_details' : buttonName },
+      content: defaultBizContent,
+    };
+  }
+  if (buttonName && bizFlowMap[buttonName]) {
+    return { tag: 'biz', attrs: baseBizAttrs, content: makeInteractiveBizContent('2', buttonName) };
+  }
+  if (nativeFlowMessage || message.buttonsMessage || message.templateMessage) {
+    return { tag: 'biz', attrs: baseBizAttrs, content: makeInteractiveBizContent('9', 'mixed') };
+  }
+  if (message.listMessage) {
+    return { tag: 'biz', attrs: baseBizAttrs, content: listBizContent };
+  }
+  return { tag: 'biz', attrs: baseBizAttrs, content: defaultBizContent };
+}
 import { BaileysMessageProcessor } from './baileysMessage.processor';
 import { useVoiceCallsBaileys } from './voiceCalls/useVoiceCallsBaileys';
 
@@ -2156,58 +2213,37 @@ export class BaileysStartupService extends ChannelStartupService {
     // NOTE: NÃO DEVEMOS GERAR O messageId AQUI, SOMENTE SE VIER INFORMADO POR PARAMETRO. A GERAÇÃO ANTERIOR IMPEDE O WZAP DE IDENTIFICAR A SOURCE.
     if (messageId) option.messageId = messageId;
 
-    if (message['viewOnceMessage']) {
-      // Check if this is an interactive button message
-      const interactiveMsg = message['viewOnceMessage']?.message?.interactiveMessage;
-      if (interactiveMsg?.nativeFlowMessage) {
-        try {
-          // Inject binary nodes (biz, interactive, native_flow) WITHOUT the bot node
-          // The bot node ({ tag: 'bot', attrs: { biz_bot: '1' } }) causes WhatsApp to tag the message as "IA✦"
-          const normalizedContent = { interactiveMessage: interactiveMsg };
-          const buttonsNode = getButtonArgs(normalizedContent);
+    // Intercept interactiveMessage to inject required biz binary node
+    // Following @itsliaaa/baileys approach: send interactiveMessage directly (no viewOnceMessage wrapper)
+    if (message['interactiveMessage']?.nativeFlowMessage) {
+      try {
+        const bizNode = getBizBinaryNode(message);
 
-          const m = generateWAMessageFromContent(sender, message, {
-            timestamp: new Date(),
-            userJid: this.instance.wuid,
-            messageId,
-            quoted,
-          });
+        const m = generateWAMessageFromContent(sender, message, {
+          timestamp: new Date(),
+          userJid: this.instance.wuid,
+          messageId,
+          quoted,
+        });
 
-          const additionalNodes = [buttonsNode];
-          // Intentionally NOT adding { tag: 'bot', attrs: { biz_bot: '1' } } to avoid IA tag
+        const additionalNodes = [bizNode];
 
-          const id = await this.client.relayMessage(sender, message, {
-            messageId,
-            additionalNodes,
-          });
+        const id = await this.client.relayMessage(sender, message, {
+          messageId,
+          additionalNodes,
+        });
 
-          m.key = { id: id, remoteJid: sender, participant: isPnUser(sender) ? sender : undefined, fromMe: true };
-          for (const [key, value] of Object.entries(m)) {
-            if (!value || (isArray(value) && value.length) === 0) {
-              delete m[key];
-            }
+        m.key = { id: id, remoteJid: sender, participant: isPnUser(sender) ? sender : undefined, fromMe: true };
+        for (const [key, value] of Object.entries(m)) {
+          if (!value || (isArray(value) && value.length) === 0) {
+            delete m[key];
           }
-          return m;
-        } catch (error) {
-          this.logger.error(`Button binary node injection failed: ${error?.message}`);
-          // Fallback to original relayMessage without additional nodes
         }
+        return m;
+      } catch (error) {
+        this.logger.error(`Interactive message binary node injection failed: ${error?.message}`);
+        // Fallback to original sendMessage
       }
-
-      const m = generateWAMessageFromContent(sender, message, {
-        timestamp: new Date(),
-        userJid: this.instance.wuid,
-        messageId,
-        quoted,
-      });
-      const id = await this.client.relayMessage(sender, message, { messageId });
-      m.key = { id: id, remoteJid: sender, participant: isPnUser(sender) ? sender : undefined, fromMe: true };
-      for (const [key, value] of Object.entries(m)) {
-        if (!value || (isArray(value) && value.length) === 0) {
-          delete m[key];
-        }
-      }
-      return m;
     }
 
     if (
@@ -2248,7 +2284,7 @@ export class BaileysStartupService extends ChannelStartupService {
     // Intercept listMessage to inject required binary nodes (biz > list)
     if (message['listMessage']) {
       try {
-        const buttonsNode = getButtonArgs(message);
+        const bizNode = getBizBinaryNode(message);
         const m = generateWAMessageFromContent(sender, message, {
           timestamp: new Date(),
           userJid: this.instance.wuid,
@@ -2256,7 +2292,7 @@ export class BaileysStartupService extends ChannelStartupService {
           quoted,
         });
 
-        const additionalNodes = [buttonsNode];
+        const additionalNodes = [bizNode];
 
         const id = await this.client.relayMessage(sender, m.message, {
           messageId,
@@ -3408,14 +3444,10 @@ export class BaileysStartupService extends ChannelStartupService {
       }
 
       const message: proto.IMessage = {
-        viewOnceMessage: {
-          message: {
-            interactiveMessage: {
-              nativeFlowMessage: {
-                buttons: [{ name: this.mapType.get('pix'), buttonParamsJson: this.toJSONString(data.buttons[0]) }],
-                messageParamsJson: JSON.stringify({ from: 'api', templateId: v4() }),
-              },
-            },
+        interactiveMessage: {
+          nativeFlowMessage: {
+            buttons: [{ name: this.mapType.get('pix'), buttonParamsJson: this.toJSONString(data.buttons[0]) }],
+            messageParamsJson: JSON.stringify({ from: 'api', templateId: v4() }),
           },
         },
       };
@@ -3440,34 +3472,30 @@ export class BaileysStartupService extends ChannelStartupService {
     });
 
     const message: proto.IMessage = {
-      viewOnceMessage: {
-        message: {
-          interactiveMessage: {
-            body: {
-              text: (() => {
-                let t = '*' + data.title + '*';
-                if (data?.description) {
-                  t += '\n\n';
-                  t += data.description;
-                  t += '\n';
-                }
-                return t;
-              })(),
-            },
-            footer: { text: data?.footer },
-            header: (() => {
-              if (generate?.message?.imageMessage) {
-                return {
-                  hasMediaAttachment: !!generate.message.imageMessage,
-                  imageMessage: generate.message.imageMessage,
-                };
-              }
-            })(),
-            nativeFlowMessage: {
-              buttons: buttons,
-              messageParamsJson: JSON.stringify({ from: 'api', templateId: v4() }),
-            },
-          },
+      interactiveMessage: {
+        body: {
+          text: (() => {
+            let t = '*' + data.title + '*';
+            if (data?.description) {
+              t += '\n\n';
+              t += data.description;
+              t += '\n';
+            }
+            return t;
+          })(),
+        },
+        footer: { text: data?.footer },
+        header: (() => {
+          if (generate?.message?.imageMessage) {
+            return {
+              hasMediaAttachment: !!generate.message.imageMessage,
+              imageMessage: generate.message.imageMessage,
+            };
+          }
+        })(),
+        nativeFlowMessage: {
+          buttons: buttons,
+          messageParamsJson: JSON.stringify({ from: 'api', templateId: v4() }),
         },
       },
     };
